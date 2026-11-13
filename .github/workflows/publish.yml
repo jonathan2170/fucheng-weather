@@ -1,0 +1,55 @@
+# 每小時抓中央氣象署鄉鎮預報 → 每個縣市一個靜態檔 → 推到 site 分支，由 GitHub Pages 以 weather.fuchengone.com 對外提供。
+# 程式來自 jonathan2170/fucheng-life 的 tools/weather-publisher（見 SYNC.md）；授權碼只在 Actions secret CWA_AUTHORIZATION。
+# 只由排程與手動觸發：沒有 pull_request 觸發，fork 拿不到 secret。
+name: publish
+on:
+  schedule:
+    - cron: '17 * * * *'      # 每小時一次，避開整點壅塞
+  workflow_dispatch: {}
+concurrency:
+  group: weather-publish       # 同時只跑一個，避免兩次執行互相覆蓋
+  cancel-in-progress: false
+permissions:
+  contents: write              # 只用來推 site 分支
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: 取回上一版（某個縣市這次失敗時要保留上一版）
+        run: |
+          mkdir -p site
+          if git ls-remote --exit-code origin refs/heads/site >/dev/null 2>&1; then
+            git fetch -q --depth=1 origin site
+            git archive FETCH_HEAD | tar -x -C site
+          fi
+      - name: 抓預報、產生縣市檔
+        id: pub
+        env:
+          CWA_AUTHORIZATION: ${{ secrets.CWA_AUTHORIZATION }}
+          WEATHER_OUT_DIR: site
+        run: |
+          set +e
+          node --experimental-strip-types --no-warnings tools/weather-publisher/cli.ts
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+      - name: 發布到 site 分支（只留一個 commit，不讓歷史每小時變大）
+        # 0＝全部成功；1＝部分縣市保留上一版（成功的部分照樣發布）；2＝設定錯誤，什麼都沒產生，不發布
+        if: steps.pub.outputs.rc == '0' || steps.pub.outputs.rc == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "weather.fuchengone.com" > site/CNAME
+          touch site/.nojekyll
+          cd site
+          git init -q -b site
+          git add -A
+          git -c user.name=fucheng-weather -c user.email=fucheng-weather@users.noreply.github.com commit -qm "weather $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" site
+      - name: 結果（非 0 時讓這次執行標成失敗，GitHub 會寄通知）
+        run: exit "${{ steps.pub.outputs.rc }}"
