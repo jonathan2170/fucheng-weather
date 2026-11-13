@@ -1,6 +1,6 @@
 # 同步紀錄
 
-來源：jonathan2170/fucheng-life @ e896c198dc2ddd25f90af10573b56ef9f56199d2
+來源：jonathan2170/fucheng-life @ e896c198dc2ddd25f90af10573b56ef9f56199d2（另：`tools/weather-publisher/cwa.ts` 先套用 fucheng-life 分支 fix/weather-wind-bound 的修改，該 PR 合併後兩邊一致）
 
 下列檔案自來源複製，只改了相對 import 的副檔名（補 `.ts`）。來源更新時以同樣方式重新複製，並更新本表。
 

@@ -130,14 +130,27 @@ function inWindow(point: Point, [from, to]: Window): boolean {
 }
 
 const NUMBER = /^-?\d+(\.\d+)?$/;
+/**
+ * 帶比較符號的界限值，例如風速「>= 11」「≥11」（2026-11-13 首次實測：金門、臺東、澎湖強風時段出現，三縣因此整檔被擋）。
+ * 只用在明確允許的要素（風速）；取符號後的數字當作該點的值——對「全日最大」而言是保守的下限，不會把強風報小。
+ */
+const BOUNDED = /^\s*(>=|≥|＞=|＞|>|<=|≤|<)\s*(-?\d+(?:\.\d+)?)\s*$/;
 
-/** 取出視窗內的數值；缺值（"-"）略過，非數字內容視為格式錯誤 */
-function numbers(points: Point[] | undefined, window: Window, where: string): number[] {
+/** 錯誤訊息裡的原始值：只留數字、符號與空白，最多 12 字（公開的預報值，不含授權碼；方便下次一看就知道是什麼格式） */
+const showRaw = (raw: string): string => JSON.stringify(raw.replace(/[^\d.\-+<>=≥≤＞ ]/g, '?').slice(0, 12));
+
+/** 取出視窗內的數值；缺值（"-"）略過，非數字內容視為格式錯誤（allowBound：接受「>= 11」這類界限值） */
+function numbers(points: Point[] | undefined, window: Window, where: string, allowBound = false): number[] {
   const out: number[] = [];
   for (const point of points ?? []) {
     if (!inWindow(point, window) || point.raw === null) continue;
-    if (!NUMBER.test(point.raw)) fail('format', `${where} 出現非數字的值`);
-    out.push(Number(point.raw));
+    if (NUMBER.test(point.raw)) {
+      out.push(Number(point.raw));
+      continue;
+    }
+    const bound = allowBound ? BOUNDED.exec(point.raw) : null;
+    if (!bound) return fail('format', `${where} 出現非數字的值 ${showRaw(point.raw)}`);
+    out.push(Number(bound[2]));
   }
   return out;
 }
@@ -212,7 +225,7 @@ export function aggregateTown(forecast: ElementPoints, week: ElementPoints, labe
       ['apparentMinOuting', min(numbers(apparent, outing, `${where} 體感溫度`))],
       ['rainProbDaytimeMax', max(numbers(forecast.get('rainProb'), daytime, `${where} 降雨機率`))],
       ['humidityMax', max(numbers(forecast.get('humidity'), whole, `${where} 相對濕度`))],
-      ['windSpeedMax', max(numbers(forecast.get('windSpeed'), whole, `${where} 風速`))],
+      ['windSpeedMax', max(numbers(forecast.get('windSpeed'), whole, `${where} 風速`, true))],
       ['uvIndex', max(numbers(week.get('uvIndex'), whole, `${where} 紫外線指數`))],
     ];
     for (const [field, value] of optional) if (value !== undefined) (row as unknown as Record<string, number>)[field] = value;
