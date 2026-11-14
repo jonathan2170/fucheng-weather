@@ -62,7 +62,7 @@ export const FORECAST_3H_ELEMENTS = {
   temperature: { name: '溫度', key: 'Temperature' },
   apparent: { name: '體感溫度', key: 'ApparentTemperature' },
   humidity: { name: '相對濕度', key: 'RelativeHumidity' },
-  windSpeed: { name: '風速', key: 'WindSpeed' },
+  windSpeed: { name: '風速', key: 'WindSpeed', companionKey: 'BeaufortScale' },
   rainProb: { name: '3小時降雨機率', key: 'ProbabilityOfPrecipitation' },
   weather: { name: '天氣現象', key: 'Weather' },
 } as const satisfies Record<string, CwaElementSpec>;

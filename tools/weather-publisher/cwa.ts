@@ -21,6 +21,8 @@ export interface CwaElementSpec {
   name: string;
   /** ElementValue 物件內的鍵 */
   key: string;
+  /** 同一筆 ElementValue 內的佐證欄位（例如風速的 BeaufortScale）；缺鍵不算錯，只在需要時才檢查 */
+  companionKey?: string;
 }
 
 /** 單一時間點；瞬時值 start === end，區間值 end > start（毫秒時間戳） */
@@ -28,6 +30,8 @@ export interface Point {
   start: number;
   end: number;
   raw: string | null;
+  /** 佐證欄位的原始值（spec.companionKey）；沒有該欄位或沒設定時為 undefined */
+  companion?: string | null;
 }
 
 export type ElementPoints = Map<string, Point[]>; // key: 我們自己的要素代號
@@ -57,6 +61,16 @@ function readRaw(entry: Record<string, unknown>, key: string, where: string): st
   if (typeof raw !== 'string' && typeof raw !== 'number') return fail('format', `${where}.${key} 型別不符`);
   const text = String(raw).trim();
   return text === '' || text === '-' ? null : text;
+}
+
+/** 佐證欄位：缺鍵、空值、"-" 或型別不符一律回 null／原文，不丟錯（判斷在使用處，不符就照舊 fail closed） */
+function readCompanion(entry: Record<string, unknown>, key: string): string | null {
+  const values = entry.ElementValue;
+  if (!Array.isArray(values) || !isRecord(values[0]) || !(key in values[0])) return null;
+  const raw = (values[0] as Record<string, unknown>)[key];
+  if (typeof raw !== 'string' && typeof raw !== 'number') return null;
+  const text = String(raw).trim();
+  return text === '' ? null : text;
 }
 
 /**
@@ -95,14 +109,15 @@ export function readDataset(payload: unknown, expectedCountyName: string, specs:
         const where = `${name}/${spec.name}[${i}]`;
         if (!isRecord(entry)) return fail('format', `${where} 不是物件`);
         const raw = readRaw(entry, spec.key, where);
+        const companion = spec.companionKey === undefined ? undefined : readCompanion(entry, spec.companionKey);
         if (entry.DataTime !== undefined) {
           const t = parseTime(entry.DataTime, `${where}.DataTime`);
-          return { start: t, end: t, raw };
+          return { start: t, end: t, raw, companion };
         }
         const start = parseTime(entry.StartTime, `${where}.StartTime`);
         const end = parseTime(entry.EndTime, `${where}.EndTime`);
         if (end <= start) return fail('format', `${where} 結束時間不晚於開始時間`);
-        return { start, end, raw };
+        return { start, end, raw, companion };
       });
       elements.set(code, points);
     }
@@ -133,13 +148,34 @@ const NUMBER = /^-?\d+(\.\d+)?$/;
 /** 錯誤訊息裡的原始值：只留數字、符號與空白，最多 12 字（公開的預報值，不含授權碼；方便下次一看就知道是什麼格式） */
 const showRaw = (raw: string): string => JSON.stringify(raw.replace(/[^\d.\-+<>=≥≤≧≦＞＜ ]/g, '?').slice(0, 12));
 
-/** 取出視窗內的數值；缺值（"-"）略過，非數字內容（含「>= 11」這類界限值）視為格式錯誤，訊息帶出原始值 */
-function numbers(points: Point[] | undefined, window: Window, where: string): number[] {
+/** 風速界限值：只認 ">=" 或 "≥"（中間可有空白）加整數，例如 ">= 11"、"≥11"（FIELD-MAP.md「風速界限值」） */
+const WIND_LOWER_BOUND = /^(?:>=|≥)\s*(\d+)$/;
+/** 同筆 BeaufortScale 至少 6 級（≥ 10.8 m/s），才相信「>= 11 m/s」 */
+const MIN_BEAUFORT_FOR_BOUND = 6;
+const BEAUFORT = /^\d+$/;
+
+/**
+ * 取出視窗內的數值；缺值（"-"）略過，非數字內容視為格式錯誤，訊息帶出原始值。
+ * allowWindBound 為 true（只有風速）時，確認過的界限值（符號後的整數）當保守下限收下；其餘界限值照舊 fail closed。
+ */
+function numbers(points: Point[] | undefined, window: Window, where: string, allowWindBound = false): number[] {
   const out: number[] = [];
   for (const point of points ?? []) {
     if (!inWindow(point, window) || point.raw === null) continue;
-    if (!NUMBER.test(point.raw)) return fail('format', `${where} 出現非數字的值 ${showRaw(point.raw)}`);
-    out.push(Number(point.raw));
+    if (NUMBER.test(point.raw)) {
+      out.push(Number(point.raw));
+      continue;
+    }
+    const bound = allowWindBound ? WIND_LOWER_BOUND.exec(point.raw) : null;
+    if (bound) {
+      const scale = point.companion ?? null;
+      if (scale !== null && BEAUFORT.test(scale) && Number(scale) >= MIN_BEAUFORT_FOR_BOUND) {
+        out.push(Number(bound[1]));
+        continue;
+      }
+      return fail('format', `${where} 出現風速界限值 ${showRaw(point.raw)}，但風級 BeaufortScale 為 ${scale === null ? '缺少' : showRaw(scale)}（需為 ≥ ${MIN_BEAUFORT_FOR_BOUND} 的整數）`);
+    }
+    return fail('format', `${where} 出現非數字的值 ${showRaw(point.raw)}`);
   }
   return out;
 }
@@ -214,7 +250,7 @@ export function aggregateTown(forecast: ElementPoints, week: ElementPoints, labe
       ['apparentMinOuting', min(numbers(apparent, outing, `${where} 體感溫度`))],
       ['rainProbDaytimeMax', max(numbers(forecast.get('rainProb'), daytime, `${where} 降雨機率`))],
       ['humidityMax', max(numbers(forecast.get('humidity'), whole, `${where} 相對濕度`))],
-      ['windSpeedMax', max(numbers(forecast.get('windSpeed'), whole, `${where} 風速`))],
+      ['windSpeedMax', max(numbers(forecast.get('windSpeed'), whole, `${where} 風速`, true))],
       ['uvIndex', max(numbers(week.get('uvIndex'), whole, `${where} 紫外線指數`))],
     ];
     for (const [field, value] of optional) if (value !== undefined) (row as unknown as Record<string, number>)[field] = value;
