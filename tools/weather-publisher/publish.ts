@@ -72,11 +72,11 @@ const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(r
 const defaultFetch: FetchLike = (url, init) => fetch(url, init);
 
 export function datasetUrl(datasetId: string): string {
-  if (!/^F-D0047-\d{3}$/.test(datasetId)) throw new PublisherError('config', `資料集代碼格式不符：${datasetId}`);
+  if (!/^(F-D0047|C-B0027)-\d{3}$/.test(datasetId)) throw new PublisherError('config', `資料集代碼格式不符：${datasetId}`);
   return `${CWA_API_BASE}${datasetId}?format=JSON`;
 }
 
-async function fetchDataset(datasetId: string, o: Required<Pick<PublishOptions, 'apiKey' | 'fetchImpl' | 'sleep'>>): Promise<unknown> {
+export async function fetchDataset(datasetId: string, o: Required<Pick<PublishOptions, 'apiKey' | 'fetchImpl' | 'sleep'>>): Promise<unknown> {
   const url = datasetUrl(datasetId);
   let last: PublisherError = new PublisherError('network', `${datasetId} 連線失敗`);
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -114,7 +114,7 @@ async function fetchDataset(datasetId: string, o: Required<Pick<PublishOptions, 
   throw last;
 }
 
-async function atomicWrite(file: string, content: string): Promise<void> {
+export async function atomicWrite(file: string, content: string): Promise<void> {
   const tmp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.tmp`);
   try {
     await writeFile(tmp, content, 'utf8');

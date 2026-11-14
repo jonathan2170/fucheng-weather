@@ -10,6 +10,7 @@ import type { Region } from '../../src/data/types.ts';
 import { buildJobs } from './build.ts';
 import { COUNTY_FILE_FORMAT, COUNTY_FILE_FORMAT_V2, type CountyFileFormat } from '../../src/weather/config.ts';
 import { ENV_API_KEY, ENV_FILE_FORMAT, ENV_OUT_DIR, ENV_REGIONS_FILE } from './config.ts';
+import { runClimate } from './climate.ts';
 import { isUsableApiKey, redact, runPublish, type FetchLike } from './publish.ts';
 
 export interface CliDeps {
@@ -63,7 +64,10 @@ export async function main(env: Record<string, string | undefined>, deps: CliDep
           : `FAIL ${r.countyCode} ${r.error}：${r.detail}（保留上一版 generatedAt=${r.generatedAt ?? '無'}）`,
       );
     }
-    return report.ok ? 0 : 1;
+    // 氣候統計：十年才更新，檔案新就不連網；失敗只保留上一版，與縣市預報同樣讓結束碼為 1
+    const climate = await runClimate({ apiKey, outDir: path.resolve(env[ENV_OUT_DIR] || 'out'), fetchImpl: deps.fetchImpl ?? ((url, init) => fetch(url, init)), now: deps.now, sleep: deps.sleep });
+    log(climate.status === 'kept' ? `FAIL climate ${climate.error}：${climate.detail}（保留上一版 generatedAt=${climate.generatedAt ?? '無'}）` : `OK   climate ${climate.status} generatedAt=${climate.generatedAt}`);
+    return report.ok && climate.status !== 'kept' ? 0 : 1;
   } catch (error) {
     // 執行中才出錯（例如寫 status.json 失敗）：縣市檔可能已經更新，不是「什麼都沒做」
     log(redact(`執行中失敗，部分縣市檔可能已更新：${error instanceof Error ? error.message : String(error)}`, apiKey));

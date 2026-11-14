@@ -109,3 +109,46 @@ export const COUNTY_DATASETS: Readonly<Record<string, CountyDatasets>> = {
   '09007': { countyName: '連江縣', forecast3h: 'F-D0047-081', week: 'F-D0047-083' },
   '09020': { countyName: '金門縣', forecast3h: 'F-D0047-085', week: 'F-D0047-087' },
 };
+
+/**
+ * 氣候統計（C-B0027-001 地面測站月平均資料，每 10 年更新；政府資料開放授權條款－第 1 版）。
+ * ⚠ 回應結構依公開文件推測，尚未以真實授權碼實測（待驗證 1、6）；下列鍵名集中在這裡，實測後只改這一處與 FIELD-MAP.md。
+ * 結構不符一律 fail closed（PublisherError），保留上一版。
+ */
+export const CLIMATE_DATASET_ID = 'C-B0027-001';
+export const CLIMATE_FILE = 'climate-normals.json';
+export const CLIMATE_FORMAT = 'fucheng-climate-normals/1';
+/** 氣候資料十年才更新：檔案不存在或產生超過這個時間才重抓（抓失敗保留上一版） */
+export const CLIMATE_REFRESH_MS = 7 * 24 * 3_600_000;
+/** 單檔大小上限（壓縮前字元數）；超過視為異常，不發布 */
+export const CLIMATE_MAX_CHARS = 400_000;
+export const CLIMATE_SOURCE = {
+  provider: '中央氣象署',
+  dataset: '地面測站月平均資料（C-B0027-001）',
+  datasetPage: 'https://opendata.cwa.gov.tw/dataset/climate/C-B0027-001',
+  license: '政府資料開放授權條款－第1版',
+  licenseUrl: 'https://data.gov.tw/license',
+  attribution: '氣候資料來源：中央氣象署地面測站月平均資料（依政府資料開放授權條款－第 1 版提供）',
+} as const;
+export const CLIMATE_FIELDS = {
+  /** records 底下到測站陣列的路徑 */
+  path: ['data', 'surfaceObs', 'location'],
+  station: 'station',
+  stationId: 'StationID',
+  stationName: 'StationName',
+  lat: 'StationLatitude',
+  lon: 'StationLongitude',
+  stats: 'stationObsStatistics',
+  temperature: 'AirTemperature',
+  precipitation: 'Precipitation',
+  monthly: 'monthly',
+  month: 'Month',
+  mean: 'Mean',
+  meanMax: 'MeanMaximum',
+  meanMin: 'MeanMinimum',
+  accumulation: 'Accumulation',
+  /** 資料期間（records.data.surfaceObs 之外的說明欄位，找不到時 fail closed） */
+  period: 'DataPeriod',
+  startYear: 'StartYear',
+  endYear: 'EndYear',
+} as const;

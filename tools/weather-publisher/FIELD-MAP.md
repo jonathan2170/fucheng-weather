@@ -55,3 +55,14 @@
 | `config`（不進 status） | 授權碼缺／格式不符、資料集對照表不全 | 整批不執行，結束碼 2 |
 
 任何一種失敗：該縣市檔案不動；`status.json` 記 `ok:false` 與上一版 `generatedAt`；整體結束碼 1。
+
+## 氣候統計（任務 A6／0-09；C-B0027-001 地面測站月平均資料）
+
+> ⚠ **回應結構尚未以真實授權碼實測。** 下列鍵名是依公開文件推測，集中在 `config.ts` 的 `CLIMATE_FIELDS`；測試用的是依此結構合成的回應（`tests/weather-publisher/climate-fixtures.ts`）。實測後只需改 `CLIMATE_FIELDS` 與本節。結構不符一律 fail closed（保留上一版），不會發出錯的資料。
+
+- 資料集：`C-B0027-001`（每 10 年更新；政府資料開放授權條款－第 1 版）。請求與預報相同：授權碼只放 `Authorization` 標頭，重試、逾時、回應大小上限共用 `fetchDataset`。
+- 輸出：`{輸出資料夾}/v1/climate-normals.json`（`https://weather.fuchengone.com/v1/climate-normals.json`），格式 `fucheng-climate-normals/1`：`generatedAt`、`source`（來源、授權、標示文字）、`period`（統計期間）、`stations[]`（`id`、`name`、`lat`、`lon`、`months[12]`：`avgTemp`、`avgHigh`、`avgLow`、`precip`）。
+- 重抓規則：檔案不存在、讀不回來、`generatedAt` 在未來、或產生超過 7 天才抓；否則不連網。抓失敗保留上一版（位元組不變），不寫 `status.json`，只在執行記錄與結束碼（1）反映。
+- 欄位對照（推測）：`records.data.surfaceObs.DataPeriod.{StartYear,EndYear}` → `period`；`…location[].station.{StationID,StationName,StationLatitude,StationLongitude}` → 測站；`…stationObsStatistics.AirTemperature.monthly[].{Month,Mean,MeanMaximum,MeanMinimum}` → `avgTemp`／`avgHigh`／`avgLow`（**須是「日最高／最低的月平均」，不是極值**；實測時務必確認）；`…Precipitation.monthly[].Accumulation` → `precip`（毫米）。
+- 缺值（`"-"`、空字串、`X`、`-99` 以下）：該測站只要有一個月缺值就整站略過，不補洞；全部測站都略過 → `coverage` 失敗。要素整個消失（欄位改名）→ `format` 失敗。數值或座標超出合理範圍、未通過 App 端解析器 → `range` 失敗。
+- 沒有「降雨日數」：月平均資料只有降水量。App 端 `rainDays` 一律 0，雨天相關建議維持關閉（保守預設）。
