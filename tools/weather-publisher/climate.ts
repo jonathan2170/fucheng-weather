@@ -17,6 +17,31 @@ const fail = (category: FailureCategory, message: string): never => {
   throw new PublisherError(category, message);
 };
 
+const SHAPE_MAX_DEPTH = 4;
+const SHAPE_MAX_KEYS = 30;
+const SHAPE_MAX_CHARS = 1500;
+
+/** 鍵名保留原樣（含中文等 Unicode）；只有含非 [\w.-] 字元（空白、分隔符、引號、控制字元等）才以 JSON 字串編碼，所以不同鍵名不會互相混淆、也不會破壞輸出格式 */
+const shapeKey = (k: string): string => {
+  const cut = k.length > 40 ? k.slice(0, 40) : k;
+  return /^[\w.-]+$/.test(cut) ? cut : JSON.stringify(cut);
+};
+
+/** 診斷用：只輸出鍵名與型別（深度 ≤ 4，陣列只看第一個元素），不輸出任何數值或字串內容 */
+export function describeShape(v: unknown, depth = 0): string {
+  if (v === null) return 'null';
+  if (Array.isArray(v)) return v.length === 0 ? '[]' : depth >= SHAPE_MAX_DEPTH ? '[…]' : `[${describeShape(v[0], depth + 1)}]`;
+  if (typeof v === 'object') {
+    const keys = Object.keys(v as Record<string, unknown>);
+    if (depth >= SHAPE_MAX_DEPTH) return keys.length ? '{…}' : '{}';
+    const shown = keys.slice(0, SHAPE_MAX_KEYS).map((k) => `${shapeKey(k)}:${describeShape((v as Record<string, unknown>)[k], depth + 1)}`);
+    if (keys.length > SHAPE_MAX_KEYS) shown.push(`…(+${keys.length - SHAPE_MAX_KEYS})`);
+    return `{${shown.join(',')}}`;
+  }
+  return typeof v;
+}
+const shapeOf = (v: unknown) => describeShape(v).slice(0, SHAPE_MAX_CHARS);
+
 /** 整數欄位（年份、月份）：只收整數或純數字字串；null、布林、空字串、小數都拒絕，不做強制轉型 */
 function intField(v: unknown): number {
   if (typeof v === 'number') return Number.isInteger(v) ? v : NaN;
@@ -36,17 +61,17 @@ function value(v: unknown, where: string): number | null {
 /** 純轉換：回應 → 氣候統計檔。單一測站有任一個月缺值就整站略過（不補洞）；沒有任何可用測站則失敗 */
 export function convertClimate(raw: unknown, now: Date): ClimateNormalsFile {
   if (!isRec(raw) || (raw.success !== 'true' && raw.success !== true)) return fail('format', '氣候回應的 success 不是 true');
-  if (!isRec(raw.records)) return fail('format', '氣候回應缺少 records');
+  if (!isRec(raw.records)) return fail('format', `氣候回應缺少 records；回應結構=${shapeOf(raw)}`);
   let node: unknown = raw.records;
   for (const key of F.path.slice(0, -1)) node = isRec(node) ? node[key] : undefined;
-  if (!isRec(node)) return fail('format', '氣候回應結構不符（surfaceObs）');
+  if (!isRec(node)) return fail('format', `氣候回應結構不符（surfaceObs）；records 結構=${shapeOf(raw.records)}`);
   const period = node[F.period];
-  if (!isRec(period)) return fail('format', '氣候回應缺少資料期間');
+  if (!isRec(period)) return fail('format', `氣候回應缺少資料期間；surfaceObs 結構=${shapeOf(node)}`);
   const startYear = intField(period[F.startYear]);
   const endYear = intField(period[F.endYear]);
   if (!Number.isInteger(startYear) || !Number.isInteger(endYear) || startYear < 1800 || endYear > 2200 || startYear > endYear) return fail('format', '氣候回應資料期間不合法');
   const list = node[F.path[F.path.length - 1]];
-  if (!Array.isArray(list)) return fail('format', '氣候回應缺少測站清單');
+  if (!Array.isArray(list)) return fail('format', `氣候回應缺少測站清單；surfaceObs 結構=${shapeOf(node)}`);
 
   const stations: ClimateNormalsStation[] = [];
   const seen = new Set<string>();
