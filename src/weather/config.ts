@@ -9,6 +9,9 @@ export const WEATHER_ORIGIN = 'https://weather.fuchengone.com';
 /** 縣市檔路徑：只含縣市代碼，不含鄉鎮（託管端只知道下載了哪個縣市檔，規格 3.4、5.3） */
 export const countyFileUrl = (countyCode: string): string => `${WEATHER_ORIGIN}/v1/${encodeURIComponent(countyCode)}.json`;
 
+/** 氣候統計（月平均）檔：與縣市檔同網域、同 CSP 來源，不新增外部來源（任務 A6） */
+export const CLIMATE_NORMALS_URL = `${WEATHER_ORIGIN}/v1/climate-normals.json`;
+
 /** 縣市檔格式代號（暫定，待 0-05 欄位對照表定稿後同步；見 county-file.ts） */
 export const COUNTY_FILE_FORMAT = 'fucheng-weather/1';
 /**
