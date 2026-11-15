@@ -64,11 +64,16 @@
 
 ## 氣候統計（任務 A6／0-09；C-B0027-001 地面測站月平均資料）
 
-> ⚠ **回應結構尚未以真實授權碼實測。** 下列鍵名是依公開文件推測，集中在 `config.ts` 的 `CLIMATE_FIELDS`；測試用的是依此結構合成的回應（`tests/weather-publisher/climate-fixtures.ts`）。實測後只需改 `CLIMATE_FIELDS` 與本節。結構不符一律 fail closed（保留上一版），不會發出錯的資料。
+> 回應結構已依真實鍵名結構修正（#174，2026-11-15 實測；只有鍵名與型別，沒有數值）。鍵名集中在 `config.ts` 的 `CLIMATE_FIELDS`。結構不符一律 fail closed（保留上一版），不會發出錯的資料。
 
 - 資料集：`C-B0027-001`（每 10 年更新；政府資料開放授權條款－第 1 版）。請求與預報相同：授權碼只放 `Authorization` 標頭，重試、逾時、回應大小上限共用 `fetchDataset`。
 - 輸出：`{輸出資料夾}/v1/climate-normals.json`（`https://weather.fuchengone.com/v1/climate-normals.json`），格式 `fucheng-climate-normals/1`：`generatedAt`、`source`（來源、授權、標示文字）、`period`（統計期間）、`stations[]`（`id`、`name`、`lat`、`lon`、`months[12]`：`avgTemp`、`avgHigh`、`avgLow`、`precip`）。
 - 重抓規則：檔案不存在、讀不回來、`generatedAt` 在未來、或產生超過 7 天才抓；否則不連網。抓失敗保留上一版（位元組不變），不寫 `status.json`，只在執行記錄與結束碼（1）反映。
-- 欄位對照（推測）：`records.data.surfaceObs.DataPeriod.{StartYear,EndYear}` → `period`；`…location[].station.{StationID,StationName,StationLatitude,StationLongitude}` → 測站；`…stationObsStatistics.AirTemperature.monthly[].{Month,Mean,MeanMaximum,MeanMinimum}` → `avgTemp`／`avgHigh`／`avgLow`（**須是「日最高／最低的月平均」，不是極值**；實測時務必確認）；`…Precipitation.monthly[].Accumulation` → `precip`（毫米）。
-- 缺值（`"-"`、空字串、`X`、`-99` 以下）：該測站只要有一個月缺值就整站略過，不補洞；全部測站都略過 → `coverage` 失敗。要素整個消失（欄位改名）→ `format` 失敗。數值或座標超出合理範圍、未通過 App 端解析器 → `range` 失敗。
+- 欄位對照（實測）：`records.data.surfaceObs.location[].station.{StationID,StationName,StationNameEN,StationAttribute}` → 測站（**沒有經緯度**）；`…stationObsStatistics.<要素>.{StationStartYear,StationEndYear}`（number）→ 該要素的資料期間（**資料期間在各要素裡**，不在 surfaceObs 這一層）；`…AirTemperature.monthly[].{Month,Mean,Maximum,Minimum}`（字串）→ `avgTemp`／`avgHigh`／`avgLow`；`…Precipitation.monthly[].Accumulation`（字串）→ `precip`（毫米）。未取用：`maxGE30Days`、`meanGE25Days`、`minLE10Days`、`GE01Days`。
+  - ⚠ `Maximum`／`Minimum` 是「日最高／最低的月平均」還是「月極值」，鍵名看不出來，尚未確認；若是極值，`avgHigh`／`avgLow` 會偏離，需對照氣象署欄位說明。**確認前 `CLIMATE_MAXMIN_CONFIRMED = false`，`convertClimate` 即使座標齊全也拒絕產出（`format`）**；確認是前者後改 true。
+  - 期間：整數、1800 ≤ 起 ≤ 迄 ≤ 今年；缺少或不合理 → 該測站略過（不猜年份）。各站各要素實際期間寫在 `stations[].periods.{temperature,precipitation}`；檔案層 `period` 只是涵蓋範圍（最早起、最晚迄）。
+  - 月資料：`Month` 必須是 1～12 且不重複；數值非數字 → `format` 失敗，訊息帶出原始值（只留數字與符號，最多 12 字）。
+  - 座標：氣候回應沒有。`runClimate` 另抓**測站基本資料**（同一把授權碼、同一個 `fetchDataset`）：`C-B0074-001`（有人氣象測站基本資料）與 `C-B0074-002`（無人氣象測站基本資料），代碼取自氣象署 OpenAPI 規格 <https://opendata.cwa.gov.tw/apidoc/v1>。兩份都要成功（缺一份、HTTP 錯誤、格式不符、兩份代碼重複 → fail closed，保留上一版）。出現在氣候回應的測站若座標讀不出來或不在臺灣範圍（緯 21.5–26.5、經 118–122.5）→ `range` 失敗；測站基本資料沒有的測站 → 略過（全部沒有則 `coverage`）。
+  - ⚠ **測站基本資料的回應鍵名尚未實測**（OpenAPI 規格沒有回應欄位定義；本環境也沒有授權碼）。`STATION_FIELDS`（config.ts）是暫定值：`records.data.stationStatus.station[]`、`StationID`、`StationLatitude`、`StationLongitude`。對不上時 `format` 失敗，log 會印 records 的鍵名結構（不含數值），照結構改 `STATION_FIELDS` 即可。
+- 缺值（`"-"`、空字串、`X`、`-99` 以下）：該測站只要有一個月缺值就整站略過，不補洞；全部測站都略過 → `coverage` 失敗。要素整個消失（欄位改名）→ `format` 失敗。數值（含高低溫關係）或已提供的座標超出合理範圍 → `range` 失敗；這些檢查在略過判定之前，被略過的測站也一併檢查。未通過 App 端解析器 → `range` 失敗。
 - 沒有「降雨日數」：月平均資料只有降水量。App 端 `rainDays` 一律 0，雨天相關建議維持關閉（保守預設）。

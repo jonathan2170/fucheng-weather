@@ -146,7 +146,7 @@ function inWindow(point: Point, [from, to]: Window): boolean {
 
 const NUMBER = /^-?\d+(\.\d+)?$/;
 /** 錯誤訊息裡的原始值：只留數字、符號與空白，最多 12 字（公開的預報值，不含授權碼；方便下次一看就知道是什麼格式） */
-const showRaw = (raw: string): string => JSON.stringify(raw.replace(/[^\d.\-+<>=≥≤≧≦＞＜ ]/g, '?').slice(0, 12));
+export const showRaw = (raw: string): string => JSON.stringify(raw.replace(/[^\d.\-+<>=≥≤≧≦＞＜ ]/g, '?').slice(0, 12));
 
 /** 風速界限值：只認 ">=" 或 "≥"（中間可有空白）加整數，例如 ">= 11"、"≥11"（FIELD-MAP.md「風速界限值」） */
 const WIND_LOWER_BOUND = /^(?:>=|≥)\s*(\d+)$/;

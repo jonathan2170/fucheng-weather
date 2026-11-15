@@ -116,6 +116,23 @@ export const COUNTY_DATASETS: Readonly<Record<string, CountyDatasets>> = {
  * 結構不符一律 fail closed（PublisherError），保留上一版。
  */
 export const CLIMATE_DATASET_ID = 'C-B0027-001';
+/**
+ * 測站基本資料（補座標用；#174 第 4 步，方綸 2026-11-15 同意）。代碼取自氣象署開放資料 OpenAPI 規格
+ * https://opendata.cwa.gov.tw/apidoc/v1 ：C-B0074-001＝有人氣象測站基本資料、C-B0074-002＝無人氣象測站基本資料。
+ * 兩份都要抓到才算數（缺一份 → fail closed，保留上一版）。
+ */
+export const STATION_DATASET_IDS = ['C-B0074-001', 'C-B0074-002'] as const;
+/**
+ * ⚠ 測站基本資料的回應結構尚未以真實授權碼實測（OpenAPI 規格沒有定義回應欄位）；下列鍵名是依印象的暫定值，
+ * 對不上時 fail closed 並在 log 印出鍵名結構，下一輪照真實結構只改這一處與 FIELD-MAP.md。
+ */
+export const STATION_FIELDS = {
+  /** records 底下到測站陣列的路徑 */
+  path: ['data', 'stationStatus', 'station'],
+  stationId: 'StationID',
+  latitude: 'StationLatitude',
+  longitude: 'StationLongitude',
+} as const;
 export const CLIMATE_FILE = 'climate-normals.json';
 export const CLIMATE_FORMAT = 'fucheng-climate-normals/1';
 /** 氣候資料十年才更新：檔案不存在或產生超過這個時間才重抓（抓失敗保留上一版） */
@@ -130,25 +147,27 @@ export const CLIMATE_SOURCE = {
   licenseUrl: 'https://data.gov.tw/license',
   attribution: '氣候資料來源：中央氣象署地面測站月平均資料（依政府資料開放授權條款－第 1 版提供）',
 } as const;
+/**
+ * Maximum／Minimum 是「日最高／最低的月平均」還是「月極值」尚未取得權威定義。確認是前者之前保持 false：
+ * convertClimate 會拒絕產出（避免月極值被當成 avgHigh／avgLow，讓 App 的季節判斷偏離）。確認後改 true 並更新 FIELD-MAP.md。
+ */
+export const CLIMATE_MAXMIN_CONFIRMED = false;
 export const CLIMATE_FIELDS = {
   /** records 底下到測站陣列的路徑 */
   path: ['data', 'surfaceObs', 'location'],
   station: 'station',
   stationId: 'StationID',
   stationName: 'StationName',
-  lat: 'StationLatitude',
-  lon: 'StationLongitude',
   stats: 'stationObsStatistics',
   temperature: 'AirTemperature',
   precipitation: 'Precipitation',
   monthly: 'monthly',
   month: 'Month',
   mean: 'Mean',
-  meanMax: 'MeanMaximum',
-  meanMin: 'MeanMinimum',
+  meanMax: 'Maximum',
+  meanMin: 'Minimum',
   accumulation: 'Accumulation',
-  /** 資料期間（records.data.surfaceObs 之外的說明欄位，找不到時 fail closed） */
-  period: 'DataPeriod',
-  startYear: 'StartYear',
-  endYear: 'EndYear',
+  /** 資料期間在各要素裡（2026-11-15 實測；整數年份）：stationObsStatistics.<要素>.StationStartYear／StationEndYear。測站沒有經緯度（實測），座標不從回應讀 */
+  startYear: 'StationStartYear',
+  endYear: 'StationEndYear',
 } as const;
