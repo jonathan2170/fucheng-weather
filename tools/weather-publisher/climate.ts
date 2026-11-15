@@ -10,9 +10,12 @@
 import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parseClimateNormals, parseClimateNormalsText, CLIMATE_NORMALS_FORMAT, type ClimateNormalsFile, type ClimateNormalsStation } from '../../src/weather/climate-normals.ts';
-import { CLIMATE_DATASET_ID, CLIMATE_FIELDS as F, CLIMATE_MAXMIN_CONFIRMED, CLIMATE_FILE, CLIMATE_FORMAT, CLIMATE_MAX_CHARS, CLIMATE_REFRESH_MS, CLIMATE_SOURCE, OUTPUT_SUBDIR, STATION_DATASET_IDS, STATION_FIELDS as SF } from './config.ts';
+import { CLIMATE_DATASET_ID, CLIMATE_FIELDS as F, CLIMATE_FILE, CLIMATE_FORMAT, CLIMATE_MAX_CHARS, CLIMATE_REFRESH_MS, CLIMATE_SOURCE, OUTPUT_SUBDIR, STATION_DATASET_IDS, STATION_FIELDS as SF } from './config.ts';
 import { PublisherError, showRaw, type FailureCategory } from './cwa.ts';
-import { atomicWrite, fetchDataset, isUsableApiKey, redact, type FetchLike } from './publish.ts';
+import { withWriteLock, type LockOptions } from './lock.ts';
+import { fetchDataset, isUsableApiKey, redact, type FetchLike } from './publish.ts';
+
+const LOCK_NAME = '.climate-normals.lock';
 
 const isRec = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const fail = (category: FailureCategory, message: string): never => {
@@ -122,11 +125,10 @@ function elementPeriod(el: unknown, now: Date): { startYear: number; endYear: nu
  * - 結構不符、月份不合法或重複、數值非數字 → 整份 format 失敗（不猜）。
  * - 單月缺值、缺／不合理的資料期間、沒有座標 → 該測站略過（不補洞）；沒有任何可用測站則 coverage 失敗，訊息列出各原因的站數。
  * - 範圍與高低溫關係、已提供的座標，都在略過判定之前就對回應內每個測站檢查；任何一站不合理 → 整份 range 失敗（被略過的測站也不例外）。
- * - Maximum／Minimum 語意未確認（CLIMATE_MAXMIN_CONFIRMED）前，即使有座標也拒絕產出（fail closed）。
+ * - Maximum／Minimum 是日最高／日最低氣溫的月平均（meantxmax／meantxmin，見 FIELD-MAP.md），直接對應 avgHigh／avgLow。
  * - coordinates：StationID → 座標。氣候回應沒有座標；runClimate 從測站基本資料取得後傳入，這裡預設空表 → 全部測站因缺座標略過。
  */
-export function convertClimate(raw: unknown, now: Date, coordinates: StationCoordinates = new Map(), options: { maxMinConfirmed?: boolean } = {}): ClimateNormalsFile {
-  const maxMinConfirmed = options.maxMinConfirmed ?? CLIMATE_MAXMIN_CONFIRMED;
+export function convertClimate(raw: unknown, now: Date, coordinates: StationCoordinates = new Map()): ClimateNormalsFile {
   if (!isRec(raw) || (raw.success !== 'true' && raw.success !== true)) return fail('format', '氣候回應的 success 不是 true');
   if (!isRec(raw.records)) return fail('format', `氣候回應缺少 records；回應結構=${shapeOf(raw)}`);
   let node: unknown = raw.records;
@@ -210,9 +212,6 @@ export function convertClimate(raw: unknown, now: Date, coordinates: StationCoor
   if (stations.length === 0) {
     return fail('coverage', `氣候回應沒有任何可輸出的測站（缺值 ${skipped.value} 站、缺／不合理的資料期間 ${skipped.period} 站、沒有座標 ${skipped.coordinates} 站；回應本身沒有經緯度，座標需另有來源）`);
   }
-  if (!maxMinConfirmed) {
-    return fail('format', 'Maximum／Minimum 的語意尚未確認（日最高／最低的月平均，或月極值）；確認前不產出氣候統計');
-  }
   const all = stations.flatMap((s) => [s.periods!.temperature, s.periods!.precipitation]);
   const file: ClimateNormalsFile = {
     format: CLIMATE_NORMALS_FORMAT,
@@ -255,8 +254,8 @@ export async function runClimate(options: {
   sleep?: (ms: number) => Promise<void>;
   /** StationID → 座標；沒給就從測站基本資料（C-B0074-001／-002）抓。給了就不連網抓（測試用） */
   coordinates?: StationCoordinates;
-  /** Maximum／Minimum 語意是否已確認；預設取 CLIMATE_MAXMIN_CONFIRMED（false） */
-  maxMinConfirmed?: boolean;
+  /** 寫入鎖參數（測試用） */
+  lock?: LockOptions;
 }): Promise<ClimateResult> {
   const { apiKey, outDir } = options;
   if (!isUsableApiKey(apiKey)) throw new PublisherError('config', '授權碼未設定或格式不符');
@@ -264,20 +263,7 @@ export async function runClimate(options: {
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const dir = path.join(outDir, OUTPUT_SUBDIR);
   const file = path.join(dir, CLIMATE_FILE);
-  const previous = await readPublished(file);
-  if (previous && now().getTime() - Date.parse(previous.generatedAt) < CLIMATE_REFRESH_MS && Date.parse(previous.generatedAt) <= now().getTime()) {
-    return { status: 'fresh', generatedAt: previous.generatedAt };
-  }
-  try {
-    const raw = await fetchDataset(CLIMATE_DATASET_ID, { apiKey, fetchImpl: options.fetchImpl, sleep });
-    const coordinates = options.coordinates ?? (await fetchStationCoordinates({ apiKey, fetchImpl: options.fetchImpl, sleep }));
-    const built = convertClimate(raw, now(), coordinates, { maxMinConfirmed: options.maxMinConfirmed });
-    const body = `${JSON.stringify(built)}\n`;
-    if (body.length > CLIMATE_MAX_CHARS) return fail('size', '氣候統計檔過大');
-    await mkdir(dir, { recursive: true });
-    await atomicWrite(file, body);
-    return { status: 'updated', generatedAt: built.generatedAt };
-  } catch (error) {
+  const kept = async (error: unknown, previous: ClimateNormalsFile | null): Promise<ClimateResult> => {
     const known = error instanceof PublisherError;
     return {
       status: 'kept',
@@ -285,6 +271,34 @@ export async function runClimate(options: {
       error: known ? error.category : 'internal',
       detail: redact(known ? error.message : `未預期的錯誤（${error instanceof Error ? error.name : 'unknown'}）`, apiKey),
     };
+  };
+  // 取鎖 → 鎖內讀上一版 → 鎖內判定新舊 → 鎖內抓取、轉換、寫入。別的實體在我們等鎖時已更新，這裡讀到的就是它的結果，回 'fresh'（沒有覆寫）。
+  try {
+    await mkdir(dir, { recursive: true });
+    return await withWriteLock(
+      path.join(dir, LOCK_NAME),
+      async (held) => {
+        const previous = await readPublished(file);
+        if (previous && now().getTime() - Date.parse(previous.generatedAt) < CLIMATE_REFRESH_MS && Date.parse(previous.generatedAt) <= now().getTime()) {
+          return { status: 'fresh', generatedAt: previous.generatedAt } satisfies ClimateResult;
+        }
+        try {
+          const raw = await fetchDataset(CLIMATE_DATASET_ID, { apiKey, fetchImpl: options.fetchImpl, sleep });
+          const coordinates = options.coordinates ?? (await fetchStationCoordinates({ apiKey, fetchImpl: options.fetchImpl, sleep }));
+          const built = convertClimate(raw, now(), coordinates);
+          const body = `${JSON.stringify(built)}\n`;
+          if (body.length > CLIMATE_MAX_CHARS) return fail('size', '氣候統計檔過大');
+          await held.commit(file, body); // 圍欄：單一 rename 提交，鎖若已被接手就失敗、不寫
+          return { status: 'updated', generatedAt: built.generatedAt } satisfies ClimateResult;
+        } catch (error) {
+          return kept(error, previous);
+        }
+      },
+      options.lock,
+    );
+  } catch (error) {
+    // 沒拿到鎖（或建資料夾失敗）：什麼都沒寫；上一版只用來回報，不影響結果
+    return kept(error, await readPublished(file));
   }
 }
 

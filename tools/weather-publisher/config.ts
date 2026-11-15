@@ -147,11 +147,6 @@ export const CLIMATE_SOURCE = {
   licenseUrl: 'https://data.gov.tw/license',
   attribution: '氣候資料來源：中央氣象署地面測站月平均資料（依政府資料開放授權條款－第 1 版提供）',
 } as const;
-/**
- * Maximum／Minimum 是「日最高／最低的月平均」還是「月極值」尚未取得權威定義。確認是前者之前保持 false：
- * convertClimate 會拒絕產出（避免月極值被當成 avgHigh／avgLow，讓 App 的季節判斷偏離）。確認後改 true 並更新 FIELD-MAP.md。
- */
-export const CLIMATE_MAXMIN_CONFIRMED = false;
 export const CLIMATE_FIELDS = {
   /** records 底下到測站陣列的路徑 */
   path: ['data', 'surfaceObs', 'location'],
