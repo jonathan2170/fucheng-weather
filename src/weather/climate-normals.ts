@@ -17,12 +17,18 @@ export interface ClimateNormalsMonth {
   /** 月降水量（毫米） */
   precip: number;
 }
+export interface ClimatePeriod {
+  startYear: number;
+  endYear: number;
+}
 export interface ClimateNormalsStation {
   id: string;
   name: string;
   lat: number;
   lon: number;
   months: ClimateNormalsMonth[];
+  /** 這個測站各要素實際的統計期間（各要素可能不同；舊檔沒有此欄） */
+  periods?: { temperature: ClimatePeriod; precipitation: ClimatePeriod };
 }
 export interface ClimateNormalsFile {
   format: typeof CLIMATE_NORMALS_FORMAT;
@@ -42,6 +48,8 @@ export class ClimateNormalsError extends Error {
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const text = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '';
 const num = (v: unknown, lo: number, hi: number): v is number => typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi;
+const validPeriod = (v: unknown): v is ClimatePeriod =>
+  isObj(v) && Number.isInteger(v.startYear) && Number.isInteger(v.endYear) && (v.startYear as number) >= 1800 && (v.endYear as number) <= 2200 && (v.startYear as number) <= (v.endYear as number);
 const bad = (m: string): never => {
   throw new ClimateNormalsError(m);
 };
@@ -76,7 +84,15 @@ export function parseClimateNormals(raw: unknown): ClimateNormalsFile {
       if (m.avgTemp < m.avgLow || m.avgTemp > m.avgHigh) return bad(`測站平均氣溫不在平均最低與最高之間：${String(st.id)} ${i + 1} 月`);
       months.push({ month: i + 1, avgTemp: m.avgTemp, avgHigh: m.avgHigh, avgLow: m.avgLow, precip: m.precip });
     });
-    stations.push({ id: st.id, name: st.name, lat: st.lat as number, lon: st.lon as number, months });
+    let periods: ClimateNormalsStation['periods'];
+    if (st.periods !== undefined) {
+      if (!isObj(st.periods) || !validPeriod(st.periods.temperature) || !validPeriod(st.periods.precipitation)) return bad(`測站資料期間不合法：${st.id}`);
+      periods = {
+        temperature: { startYear: st.periods.temperature.startYear, endYear: st.periods.temperature.endYear },
+        precipitation: { startYear: st.periods.precipitation.startYear, endYear: st.periods.precipitation.endYear },
+      };
+    }
+    stations.push({ id: st.id, name: st.name, lat: st.lat as number, lon: st.lon as number, months, ...(periods ? { periods } : {}) });
   }
   return {
     format: CLIMATE_NORMALS_FORMAT,

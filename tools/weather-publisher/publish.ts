@@ -72,7 +72,7 @@ const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(r
 const defaultFetch: FetchLike = (url, init) => fetch(url, init);
 
 export function datasetUrl(datasetId: string): string {
-  if (!/^(F-D0047|C-B0027)-\d{3}$/.test(datasetId)) throw new PublisherError('config', `資料集代碼格式不符：${datasetId}`);
+  if (!/^(F-D0047|C-B0027|C-B0074)-\d{3}$/.test(datasetId)) throw new PublisherError('config', `資料集代碼格式不符：${datasetId}`);
   return `${CWA_API_BASE}${datasetId}?format=JSON`;
 }
 

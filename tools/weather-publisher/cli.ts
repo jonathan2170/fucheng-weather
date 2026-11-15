@@ -10,13 +10,17 @@ import type { Region } from '../../src/data/types.ts';
 import { buildJobs } from './build.ts';
 import { COUNTY_FILE_FORMAT, COUNTY_FILE_FORMAT_V2, type CountyFileFormat } from '../../src/weather/config.ts';
 import { ENV_API_KEY, ENV_FILE_FORMAT, ENV_OUT_DIR, ENV_REGIONS_FILE } from './config.ts';
-import { runClimate } from './climate.ts';
+import { runClimate, type StationCoordinates } from './climate.ts';
 import { isUsableApiKey, redact, runPublish, type FetchLike } from './publish.ts';
 
 export interface CliDeps {
   fetchImpl?: FetchLike;
   now?: () => Date;
   sleep?: (ms: number) => Promise<void>;
+  /** 測站座標對照（回應沒有座標；目前沒有來源，正式執行不傳 → 氣候統計 fail closed。測試用） */
+  climateCoordinates?: StationCoordinates;
+  /** 測試用接縫：Maximum／Minimum 語意是否已確認（預設取 config 的 CLIMATE_MAXMIN_CONFIRMED） */
+  climateMaxMinConfirmed?: boolean;
   log?: (line: string) => void;
   /** 資料集對照表（測試用）；預設為 COUNTY_DATASETS */
   countyTable?: Parameters<typeof buildJobs>[1];
@@ -65,7 +69,7 @@ export async function main(env: Record<string, string | undefined>, deps: CliDep
       );
     }
     // 氣候統計：十年才更新，檔案新就不連網；失敗只保留上一版，與縣市預報同樣讓結束碼為 1
-    const climate = await runClimate({ apiKey, outDir: path.resolve(env[ENV_OUT_DIR] || 'out'), fetchImpl: deps.fetchImpl ?? ((url, init) => fetch(url, init)), now: deps.now, sleep: deps.sleep });
+    const climate = await runClimate({ apiKey, outDir: path.resolve(env[ENV_OUT_DIR] || 'out'), fetchImpl: deps.fetchImpl ?? ((url, init) => fetch(url, init)), now: deps.now, sleep: deps.sleep, coordinates: deps.climateCoordinates, maxMinConfirmed: deps.climateMaxMinConfirmed });
     log(climate.status === 'kept' ? `FAIL climate ${climate.error}：${climate.detail}（保留上一版 generatedAt=${climate.generatedAt ?? '無'}）` : `OK   climate ${climate.status} generatedAt=${climate.generatedAt}`);
     return report.ok && climate.status !== 'kept' ? 0 : 1;
   } catch (error) {
