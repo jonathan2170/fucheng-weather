@@ -152,7 +152,12 @@ const showRaw = (raw: string): string => JSON.stringify(raw.replace(/[^\d.\-+<>=
 const WIND_LOWER_BOUND = /^(?:>=|≥)\s*(\d+)$/;
 /** 同筆 BeaufortScale 至少 6 級（≥ 10.8 m/s），才相信「>= 11 m/s」 */
 const MIN_BEAUFORT_FOR_BOUND = 6;
-const BEAUFORT = /^\d+$/;
+/** 風級：純整數，或同樣寫法的下限界限值 ">= N"／"≥N"（2026-11-15 實測：風速 ">= 11" 時風級也是 ">= 6"） */
+const BEAUFORT = /^(?:(?:>=|≥)\s*)?(\d+)$/;
+const beaufortLevel = (scale: string | null): number | null => {
+  const m = scale === null ? null : BEAUFORT.exec(scale.trim());
+  return m ? Number(m[1]) : null;
+};
 
 /**
  * 取出視窗內的數值；缺值（"-"）略過，非數字內容視為格式錯誤，訊息帶出原始值。
@@ -169,7 +174,8 @@ function numbers(points: Point[] | undefined, window: Window, where: string, all
     const bound = allowWindBound ? WIND_LOWER_BOUND.exec(point.raw) : null;
     if (bound) {
       const scale = point.companion ?? null;
-      if (scale !== null && BEAUFORT.test(scale) && Number(scale) >= MIN_BEAUFORT_FOR_BOUND) {
+      const level = beaufortLevel(scale === null ? null : String(scale));
+      if (level !== null && level >= MIN_BEAUFORT_FOR_BOUND) {
         out.push(Number(bound[1]));
         continue;
       }
