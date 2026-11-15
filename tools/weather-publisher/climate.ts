@@ -28,19 +28,34 @@ const shapeKey = (k: string): string => {
 };
 
 /** 診斷用：只輸出鍵名與型別（深度 ≤ 4，陣列只看第一個元素），不輸出任何數值或字串內容 */
-export function describeShape(v: unknown, depth = 0): string {
+export function describeShape(v: unknown, depth = 0, maxDepth = SHAPE_MAX_DEPTH): string {
   if (v === null) return 'null';
-  if (Array.isArray(v)) return v.length === 0 ? '[]' : depth >= SHAPE_MAX_DEPTH ? '[…]' : `[${describeShape(v[0], depth + 1)}]`;
+  if (Array.isArray(v)) return v.length === 0 ? '[]' : depth >= maxDepth ? '[…]' : `[${describeShape(v[0], depth + 1, maxDepth)}]`;
   if (typeof v === 'object') {
     const keys = Object.keys(v as Record<string, unknown>);
-    if (depth >= SHAPE_MAX_DEPTH) return keys.length ? '{…}' : '{}';
-    const shown = keys.slice(0, SHAPE_MAX_KEYS).map((k) => `${shapeKey(k)}:${describeShape((v as Record<string, unknown>)[k], depth + 1)}`);
+    if (depth >= maxDepth) return keys.length ? '{…}' : '{}';
+    const shown = keys.slice(0, SHAPE_MAX_KEYS).map((k) => `${shapeKey(k)}:${describeShape((v as Record<string, unknown>)[k], depth + 1, maxDepth)}`);
     if (keys.length > SHAPE_MAX_KEYS) shown.push(`…(+${keys.length - SHAPE_MAX_KEYS})`);
     return `{${shown.join(',')}}`;
   }
   return typeof v;
 }
 const shapeOf = (v: unknown) => describeShape(v).slice(0, SHAPE_MAX_CHARS);
+
+const SEGMENT_MAX_CHARS = 600;
+const SEGMENT_DEPTH = 3;
+const segment = (v: unknown, depth: number) => (v === undefined ? '無' : describeShape(v, 0, depth).slice(0, SEGMENT_MAX_CHARS));
+
+/** 缺資料期間時的第 2 步診斷（#174）：surfaceObs 上一層的鍵名、第一個測站的 AirTemperature／Precipitation 往下 3 層。只有鍵名與型別，每段限 600 字 */
+function periodDiagnostics(records: Record<string, unknown>, surfaceObs: Record<string, unknown>): string {
+  let parent: unknown = records;
+  for (const key of F.path.slice(0, -2)) parent = isRec(parent) ? parent[key] : undefined;
+  const list = surfaceObs[F.path[F.path.length - 1]];
+  const first = Array.isArray(list) ? list[0] : undefined;
+  const stats = isRec(first) ? first[F.stats] : undefined;
+  const at = (k: string) => (isRec(stats) ? stats[k] : undefined);
+  return `；surfaceObs 上一層鍵名=${segment(parent, 1)}；${F.temperature} 結構=${segment(at(F.temperature), SEGMENT_DEPTH)}；${F.precipitation} 結構=${segment(at(F.precipitation), SEGMENT_DEPTH)}`;
+}
 
 /** 整數欄位（年份、月份）：只收整數或純數字字串；null、布林、空字串、小數都拒絕，不做強制轉型 */
 function intField(v: unknown): number {
@@ -66,7 +81,7 @@ export function convertClimate(raw: unknown, now: Date): ClimateNormalsFile {
   for (const key of F.path.slice(0, -1)) node = isRec(node) ? node[key] : undefined;
   if (!isRec(node)) return fail('format', `氣候回應結構不符（surfaceObs）；records 結構=${shapeOf(raw.records)}`);
   const period = node[F.period];
-  if (!isRec(period)) return fail('format', `氣候回應缺少資料期間；surfaceObs 結構=${shapeOf(node)}`);
+  if (!isRec(period)) return fail('format', `氣候回應缺少資料期間；surfaceObs 結構=${shapeOf(node)}${periodDiagnostics(raw.records, node)}`);
   const startYear = intField(period[F.startYear]);
   const endYear = intField(period[F.endYear]);
   if (!Number.isInteger(startYear) || !Number.isInteger(endYear) || startYear < 1800 || endYear > 2200 || startYear > endYear) return fail('format', '氣候回應資料期間不合法');
